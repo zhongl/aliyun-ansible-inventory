@@ -20,7 +20,8 @@ class Rpc:
     def execute(self, request, callback):
         return callback(self.client.do_action_with_exception(request))
 
-def describe_instances(region, page_size=1):
+
+def describe_instances(region, page_size=1, page_num=0):
     request = CommonRequest()
     request.set_accept_format('json')
     request.set_domain('ecs.aliyuncs.com')
@@ -29,6 +30,7 @@ def describe_instances(region, page_size=1):
     request.set_action_name('DescribeInstances')
 
     request.add_query_param('PageSize', page_size)
+    request.add_query_param('PageNumber', page_num)
     request.add_query_param('RegionId', region)
     return request
 
@@ -37,10 +39,10 @@ def transform(instance):
     network = instance['InstanceNetworkType']
 
     def private_ip():
-      if network == 'vpc':
-        return instance['VpcAttributes']['PrivateIpAddress']['IpAddress'][0] 
-      else:
-        return instance['InnerIpAddress']['IpAddress'][0]
+        if network == 'vpc':
+            return instance['VpcAttributes']['PrivateIpAddress']['IpAddress'][0]
+        else:
+            return instance['InnerIpAddress']['IpAddress'][0]
 
     return (
         instance['InstanceId'],
@@ -63,25 +65,36 @@ def host(rpc, region, id):
     request = describe_instances(region)
     request.add_query_param('InstanceIds', json.dumps([id]))
     return rpc.execute(request, callback)
-  
+
 
 def list_host(rpc, region, page_size):
-    def callback(response):
-        def group_by_meta(key, iters):
-            return [(k, map(lambda i: i[0], list(v)))
-                    for k, v in itertools.groupby(iters, lambda i: i[1][key])]
+    def group_by_meta(key, iters):
+        iters.sort(key = lambda i: i[1][key])
+        return [(k, map(lambda i: i[0], list(v)))
+                for k, v in itertools.groupby(iters, lambda i: i[1][key])]
 
-        ins = map(transform, json.loads(response)['Instances']['Instance'])
+    def fetch(num, ins):
+        def callback(response):
+            obj = json.loads(response)
+            ins.extend(map(transform, obj['Instances']['Instance']))
+            
+            if obj['TotalCount'] > len(ins) :
+                return fetch(num + 1, ins)
+            else:
+                return ins
 
-        tuples = [('_meta', {'hostvars': dict(iter(ins))})]
+        return rpc.execute(describe_instances(region, page_size, num), callback)
 
-        tuples.extend(group_by_meta('type', ins))
-        tuples.extend(group_by_meta('zone', ins))
-        tuples.extend(group_by_meta('network', ins))
+    ins = fetch(1, [])
 
-        return json.dumps(dict(iter(tuples)))
+    tuples = [('_meta', {'hostvars': dict(iter(ins))})]
 
-    return rpc.execute(describe_instances(region, page_size), callback)
+    tuples.extend(group_by_meta('type', ins))
+    tuples.extend(group_by_meta('zone', ins))
+    tuples.extend(group_by_meta('network', ins))
+
+    return json.dumps(dict(iter(tuples)))
+    
 
 
 def main():
