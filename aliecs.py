@@ -21,7 +21,7 @@ class Rpc:
         return callback(self.client.do_action_with_exception(request))
 
 
-def describe_instances(region, page_size=1, page_num=0):
+def describe_instances(region, page_size=1, page_num=1):
     request = CommonRequest()
     request.set_accept_format('json')
     request.set_domain('ecs.aliyuncs.com')
